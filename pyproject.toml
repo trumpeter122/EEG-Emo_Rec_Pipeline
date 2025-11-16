@@ -1,0 +1,23 @@
+[project]
+name = "eeg-emo-rec"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "joblib>=1.5.2",
+    "matplotlib>=3.10.7",
+    "mne>=1.10.2",
+    "numpy>=2.3.4",
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.3",
+    "pytest>=8.4.2",
+    "rich>=14.2.0",
+    "ruff>=0.14.5",
+    "scikit-learn>=1.7.2",
+    "scipy>=1.16.3",
+    "seaborn>=0.13.2",
+    "torch>=2.9.0",
+    "torchaudio>=2.9.0",
+    "torchvision>=0.24.0",
+]
