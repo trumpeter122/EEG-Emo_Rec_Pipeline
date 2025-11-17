@@ -15,7 +15,7 @@ def _unclean_bdf(
     raw: mne.io.BaseRaw,
     subject_id: int,
 ) -> np.ndarray:
-    eeg_channels, stim_ch, raw_stim = _prepare_channels(raw=raw)
+    eeg_channels, stim_ch, raw_stim, raw_eeg = _prepare_channels(raw=raw)
     events = _get_events(
         raw_stim=raw_stim,
         stim_ch_name=stim_ch,
@@ -23,7 +23,7 @@ def _unclean_bdf(
     )
 
     data_down = _epoch_and_resample(
-        raw=raw,
+        raw=raw_eeg,
         events=events,
         eeg_channels=eeg_channels,
         sfreq_target=SFREQ_TARGET,

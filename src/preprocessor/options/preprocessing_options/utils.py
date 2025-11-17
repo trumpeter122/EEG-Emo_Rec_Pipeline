@@ -42,7 +42,7 @@ def _epoch_and_resample(
         tmin=EPOCH_TMIN,
         tmax=EPOCH_TMAX,
         picks=eeg_channels,
-        baseline=(0, 0),
+        baseline=None,
         preload=True,
         verbose=False,
     )
@@ -66,13 +66,15 @@ def _get_events(
     return events[np.where(events[:, 2] == 4)[0], :]
 
 
-def _prepare_channels(raw: mne.io.BaseRaw) -> tuple[list[str], str, mne.io.BaseRaw]:
+def _prepare_channels(
+    raw: mne.io.BaseRaw,
+) -> tuple[list[str], str, mne.io.BaseRaw, mne.io.BaseRaw]:
     ch_names = raw.ch_names
     eeg_channels = ch_names[:EEG_ELECTRODES_NUM]
     stim_ch_name = ch_names[-1]
     raw_stim = raw.copy().pick([stim_ch_name])
-    raw.pick(eeg_channels, verbose=False)
-    return eeg_channels, stim_ch_name, raw_stim
+    raw_eeg = raw.copy().pick(eeg_channels, verbose=False)
+    return eeg_channels, stim_ch_name, raw_stim, raw_eeg
 
 
 def _reorder_channels(eeg_channels: list[str]) -> list[int]:

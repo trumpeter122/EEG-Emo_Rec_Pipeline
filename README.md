@@ -27,11 +27,3 @@
 - Typing: Implement full-typing
 
 - Verbosity: No printing by default
-
-# TODO
-
-refine feature extractor public api
-
-add feature extraction methods
-
-code refactore

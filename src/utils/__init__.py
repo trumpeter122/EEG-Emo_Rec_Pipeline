@@ -1,4 +1,5 @@
-from rich.progress import BarColumn, Console, Progress, TextColumn, TimeElapsedColumn
+from rich.console import Console
+from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 
 def track(iterable, description: str, context: str):
@@ -8,13 +9,18 @@ def track(iterable, description: str, context: str):
         f"[bold blue]{description}[/bold blue]"
     )
 
+    try:
+        total = len(iterable)
+    except TypeError:
+        total = None
+
     with Progress(
         TextColumn(""),
         BarColumn(),
         "[progress.percentage]{task.percentage:>3.0f}%",
         TimeElapsedColumn(),
     ) as progress:
-        task = progress.add_task(description, total=len(iterable))
+        task = progress.add_task(description, total=total)
         for item in iterable:
             yield item
             progress.advance(task)

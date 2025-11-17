@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 import mne
 import numpy as np
@@ -9,12 +10,19 @@ from .constants import BASELINE_SEC, DEAP_ROOT, GENEVA_32
 
 
 class OptionList(list):
-    def get_name(self, name: str):
+    def get_name(self, name: str) -> Any:
         for option in self:
             if option.name == name:
                 return option
 
         raise KeyError(f'Name "{name}" does not exist')
+
+    def get_names(self, names: list[str]) -> list[Any]:
+        options = []
+        for name in names:
+            options.append(self.get_name(name))
+
+        return options
 
 
 class PreprocessingOption:
@@ -59,11 +67,11 @@ class PreprocessingOption:
 
 class ChannelPickOption:
     def __init__(self, name: str, channel_pick: list[str]):
-        self.name = name
-        if all(channel_name in GENEVA_32 for channel_name in channel_pick):
-            self.channel_pick = channel_pick
-        else:
+        if not all(channel_name in GENEVA_32 for channel_name in channel_pick):
             raise ValueError("Invalid channel names")
+
+        self.name = name
+        self.channel_pick = channel_pick
 
 
 class FeatureOption:
@@ -80,6 +88,12 @@ class FeatureOption:
 
 class SegmentationOption:
     def __init__(self, time_window: float, time_step: float):
+        if time_window <= 0:
+            raise ValueError("time_window must be positive")
+        if time_step <= 0:
+            raise ValueError("time_step must be positive")
+        if time_step > time_window:
+            raise ValueError("time_step cannot exceed time_window")
         if time_window > BASELINE_SEC:
             raise ValueError("Window cannot be longer than the baseline seconds (5s)")
 

@@ -6,7 +6,7 @@ if __name__ == "__main__":
     from preprocessor.options import PREPROCESSING_OPTIONS
 
     run_preprocessor(PREPROCESSING_OPTIONS.get_name("clean"))
-    # run_preprocessor(PREPROCESSING_OPTIONS.get_name("ica_clean"))
+    run_preprocessor(PREPROCESSING_OPTIONS.get_name("ica_clean"))
 
     # import joblib
 
@@ -33,9 +33,9 @@ if __name__ == "__main__":
         "segmentation_option",
     ]
     feop_values = [
-        [PREPROCESSING_OPTIONS.get_name("clean")],
+        PREPROCESSING_OPTIONS.get_names(["clean", "ica_clean"]),
         FEATURE_OPTIONS,
-        [CHANNEL_PICK_OPTIONS.get_name("balanced_classic_6")],
+        CHANNEL_PICK_OPTIONS.get_names(["balanced_classic_6"]),
         SEGMENTATION_OPTIONS,
     ]
 

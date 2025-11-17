@@ -13,7 +13,7 @@ from utils import track
 def _extract_feature(
     trial_df: pd.DataFrame,
     feature_extraction_option: FeatureExtractionOption,
-) -> (np.ndarray, pd.DataFrame):
+) -> tuple[np.ndarray, pd.DataFrame]:
     """
     Slice a single trial into overlapping segments and compute features
     for each segment.
@@ -50,7 +50,16 @@ def _extract_feature(
         raise ValueError("trial segment starts beyond the available samples.")
 
     trial_samples = n_samples - baseline_samples
-    relative_starts = np.arange(0, trial_samples - window, step, dtype=int)
+    if trial_samples < window:
+        raise ValueError(
+            "time_window is longer than the available trial duration after baseline."
+        )
+    relative_starts = np.arange(
+        0,
+        trial_samples - window + 1,
+        step,
+        dtype=int,
+    )
     trial_starts = trial_start + relative_starts
     trial_features: list[np.ndarray] = []
     for s in trial_starts:
