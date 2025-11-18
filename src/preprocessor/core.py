@@ -1,6 +1,12 @@
-import joblib
+"""Preprocessing entry points for the DEAP pipeline."""
+
+from __future__ import annotations
+
+from typing import cast
+
+import joblib  # type: ignore[import-untyped]
 import numpy as np
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 
 from config import DEAP_RATINGS_CSV, TRIALS_NUM, PreprocessingOption
 from utils import track
@@ -10,13 +16,16 @@ from .utils import (
     _subject_npy_path,
 )
 
+__all__ = ["run_preprocessor"]
 
-# -----------------------------
-# Batch Preprocessing Util
-# -----------------------------
-def _preprocess_subjects(
-    preprocessing_option: PreprocessingOption,
-) -> None:
+
+def _preprocess_subjects(preprocessing_option: PreprocessingOption) -> None:
+    """
+    Convert raw BDF files into subject-level numpy arrays.
+
+    Each subject is processed only once; if the destination file already exists
+    the subject is skipped to avoid redundant computation.
+    """
     out_folder = preprocessing_option.get_subject_path()
 
     for subject_id in track(
@@ -28,51 +37,44 @@ def _preprocess_subjects(
         if out_path.exists():
             continue
 
-        # R: load raw and basic preparation
         raw = _load_raw_subject(subject_id=subject_id)
+        data_out = preprocessing_option.preprocessing_method(raw, subject_id)
 
-        # processing-only function
-        data_out = preprocessing_option.preprocessing_method(
-            raw,
-            subject_id,
-        )
-
-        # W: save result in standard layout
-        np.save(out_path, data_out)
+        np.save(file=out_path, arr=data_out)
 
 
-# -----------------------------
-# Trial Splitting and Metadata Exporting Util
-# -----------------------------
 def _split_trials(preprocessing_option: PreprocessingOption) -> None:
+    """
+    Split subject-level arrays into per-trial joblib files with metadata.
+    """
     source_folder = preprocessing_option.get_subject_path()
     target_folder = preprocessing_option.get_trial_path()
-    ratings_csv_path = DEAP_RATINGS_CSV
 
-    npy_files = sorted(f for f in source_folder.iterdir() if f.suffix == ".npy")
-    ratings = pd.read_csv(ratings_csv_path)
+    npy_files = sorted(
+        file_path for file_path in source_folder.iterdir() if file_path.suffix == ".npy"
+    )
+    ratings = pd.read_csv(filepath_or_buffer=DEAP_RATINGS_CSV)
 
     trial_counter = 0
-
-    for f in track(
+    for file_path in track(
         iterable=npy_files,
         description="Splitting subject into trials for "
         f"option {{{preprocessing_option.name}}}",
         context="Preprocessor",
     ):
-        subject_id = int(f.stem[1:3])
-        data = np.load(f)  # (40, 32, T)
-        subj_ratings = ratings[ratings["Participant_id"] == subject_id].sort_values(
+        subject_id = int(file_path.stem[1:3])
+        data = np.load(file=file_path)
+        subj_mask = ratings["Participant_id"] == subject_id
+        subj_ratings = cast("pd.DataFrame", ratings.loc[subj_mask]).sort_values(
             by="Experiment_id",
         )
 
-        for i in range(TRIALS_NUM):
-            trial_data = np.squeeze(data[i])
-
-            row = subj_ratings.iloc[i]
+        for trial_idx in range(TRIALS_NUM):
+            trial_data = np.squeeze(a=data[trial_idx])
+            row = subj_ratings.iloc[trial_idx]
 
             trial_df = pd.DataFrame(
-                [
+                data=[
                     {
                         "data": trial_data,
                         "subject": int(row["Participant_id"]),
@@ -90,10 +92,10 @@ def _split_trials(preprocessing_option: PreprocessingOption) -> None:
             out_name = f"t{trial_counter:04}.joblib"
             out_path = target_folder / out_name
             if not out_path.exists():
-                joblib.dump(trial_df, out_path, compress=3)
+                joblib.dump(value=trial_df, filename=out_path, compress=3)
 
 
-def run_preprocessor(preprocessing_option):
+def run_preprocessor(preprocessing_option: PreprocessingOption) -> None:
+    """Execute both preprocessing stages for ``preprocessing_option``."""
     _preprocess_subjects(preprocessing_option=preprocessing_option)
-
-    _split_trials(preprocessing_option)
+    _split_trials(preprocessing_option=preprocessing_option)

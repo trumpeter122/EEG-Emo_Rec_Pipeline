@@ -1,15 +1,19 @@
-from config import FeatureOption, OptionList
+"""Feature extractors offered by the pipeline."""
 
-from .option_dasm import _extract_dasm
-from .option_de import _extract_de
-from .option_deasm import _extract_deasm
-from .option_psd import _extract_psd
+from config import OptionList
+
+from .option_dasm import _dasm
+from .option_de import _de
+from .option_deasm import _deasm
+from .option_psd import _psd
+
+__all__ = ["FEATURE_OPTIONS"]
 
 FEATURE_OPTIONS: OptionList = OptionList(
-    [
-        FeatureOption(name="psd", feature_channel_extraction_method=_extract_psd),
-        FeatureOption(name="de", feature_channel_extraction_method=_extract_de),
-        FeatureOption(name="deasm", feature_channel_extraction_method=_extract_deasm),
-        FeatureOption(name="dasm", feature_channel_extraction_method=_extract_dasm),
-    ]
+    options=[
+        _psd,
+        _de,
+        _deasm,
+        _dasm,
+    ],
 )

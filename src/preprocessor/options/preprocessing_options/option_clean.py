@@ -1,7 +1,9 @@
-import mne
+"""Cleaning pipeline that applies filtering and referencing."""
+
+import mne  # type: ignore[import-untyped]
 import numpy as np
 
-from config import SFREQ_TARGET
+from config import SFREQ_TARGET, PreprocessingOption
 
 from .utils import (
     _apply_filter_reference,
@@ -11,11 +13,14 @@ from .utils import (
     _prepare_channels,
 )
 
+__all__ = ["_option_clean"]
+
 
 def _clean_bdf(
     raw: mne.io.BaseRaw,
     subject_id: int,
 ) -> np.ndarray:
+    """Apply filtering/reference + resampling while preserving ordering."""
     eeg_channels, stim_ch, raw_stim, raw_eeg = _prepare_channels(raw=raw)
     events = _get_events(
         raw_stim=raw_stim,
@@ -36,3 +41,10 @@ def _clean_bdf(
         eeg_channels=eeg_channels,
         subject_id=subject_id,
     )
+
+
+_option_clean = PreprocessingOption(
+    name="clean",
+    root_dir="cleaned",
+    preprocessing_method=_clean_bdf,
+)

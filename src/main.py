@@ -1,30 +1,27 @@
-if __name__ == "__main__":
-    # Currently for test runs only
-    # So, ignore the codes here at present
+"""Development entry point for running preprocessing + extraction locally."""
 
-    from preprocessor import run_preprocessor
-    from preprocessor.options import PREPROCESSING_OPTIONS
+from __future__ import annotations
 
-    run_preprocessor(PREPROCESSING_OPTIONS.get_name("clean"))
-    run_preprocessor(PREPROCESSING_OPTIONS.get_name("ica_clean"))
+from itertools import product
 
-    # import joblib
+from config import FeatureExtractionOption
+from feature_extractor import (
+    CHANNEL_PICK_OPTIONS,
+    FEATURE_OPTIONS,
+    SEGMENTATION_OPTIONS,
+    run_feature_extractor,
+)
+from preprocessor import run_preprocessor
+from preprocessor.options import PREPROCESSING_OPTIONS
+import json
 
-    # df = joblib.load("./data/DEAP/generated/cleaned/trial/t01.joblib")
-    # print(df)
 
-    # print("data shape: ", df.iloc[0].get("data").shape)
-
-    from config import FeatureExtractionOption
-    from feature_extractor import (
-        CHANNEL_PICK_OPTIONS,
-        FEATURE_OPTIONS,
-        SEGMENTATION_OPTIONS,
-        run_feature_extractor,
+def _run_extraction_examples() -> None:
+    """Execute a small subset of preprocessing + feature extraction variants."""
+    run_preprocessor(preprocessing_option=PREPROCESSING_OPTIONS.get_name(name="clean"))
+    run_preprocessor(
+        preprocessing_option=PREPROCESSING_OPTIONS.get_name(name="ica_clean"),
     )
-
-    from itertools import product
-    import random
 
     feop_keys = [
         "preprocessing_option",
@@ -33,17 +30,21 @@ if __name__ == "__main__":
         "segmentation_option",
     ]
     feop_values = [
-        PREPROCESSING_OPTIONS.get_names(["clean", "ica_clean"]),
+        PREPROCESSING_OPTIONS.get_names(names=["clean"]),
         FEATURE_OPTIONS,
-        CHANNEL_PICK_OPTIONS.get_names(["balanced_classic_6"]),
+        CHANNEL_PICK_OPTIONS.get_names(names=["standard_32"]),
         SEGMENTATION_OPTIONS,
     ]
-
     feop_combos = [
-        dict(zip(feop_keys, feop_combo)) for feop_combo in product(*feop_values)
+        {key: value for key, value in zip(feop_keys, feop_combo)}
+        for feop_combo in product(*feop_values)
     ]
 
     for combo in feop_combos:
-        feop = FeatureExtractionOption(**combo)
+        fe_option = FeatureExtractionOption(**combo)
+        print(json.dumps(fe_option.to_params(), indent=2))
+        run_feature_extractor(feature_extraction_option=fe_option)
 
-        run_feature_extractor(feop)
+
+if __name__ == "__main__":
+    _run_extraction_examples()

@@ -1,7 +1,9 @@
-import mne
+"""Baseline pipeline that only segments/resamples raw data."""
+
+import mne  # type: ignore[import-untyped]
 import numpy as np
 
-from config import SFREQ_TARGET
+from config import SFREQ_TARGET, PreprocessingOption
 
 from .utils import (
     _base_bdf_process,
@@ -10,11 +12,14 @@ from .utils import (
     _prepare_channels,
 )
 
+__all__ = ["_option_unclean"]
+
 
 def _unclean_bdf(
     raw: mne.io.BaseRaw,
     subject_id: int,
 ) -> np.ndarray:
+    """Resample raw signals without applying any filters."""
     eeg_channels, stim_ch, raw_stim, raw_eeg = _prepare_channels(raw=raw)
     events = _get_events(
         raw_stim=raw_stim,
@@ -34,3 +39,10 @@ def _unclean_bdf(
         eeg_channels=eeg_channels,
         subject_id=subject_id,
     )
+
+
+_option_unclean = PreprocessingOption(
+    name="unclean",
+    root_dir="uncleaned",
+    preprocessing_method=_unclean_bdf,
+)
