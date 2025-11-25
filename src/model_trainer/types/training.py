@@ -30,8 +30,8 @@ class TrainingOption:
     training_method_option: TrainingMethodOption
 
     name: str = field(init=False)
-    train_loader: DataLoader[Any] = field(init=False)
-    test_loader: DataLoader[Any] = field(init=False)
+    train_loader: DataLoader[Any] | None = field(init=False)
+    test_loader: DataLoader[Any] | None = field(init=False)
 
     def __post_init__(self) -> None:
         """
@@ -48,14 +48,18 @@ class TrainingOption:
             f"{self.training_data_option.name}"
             f"|method={self.training_method_option.name}"
         )
-        self.train_loader = self.training_method_option.build_dataloader(
-            dataset=self.training_data_option.train_dataset,
-            shuffle=True,
-        )
-        self.test_loader = self.training_method_option.build_dataloader(
-            dataset=self.training_data_option.test_dataset,
-            shuffle=False,
-        )
+        if self.training_method_option.backend == "torch":
+            self.train_loader = self.training_method_option.build_dataloader(
+                dataset=self.training_data_option.train_dataset,
+                shuffle=True,
+            )
+            self.test_loader = self.training_method_option.build_dataloader(
+                dataset=self.training_data_option.test_dataset,
+                shuffle=False,
+            )
+        else:
+            self.train_loader = None
+            self.test_loader = None
 
     def to_params(self) -> dict[str, Any]:
         """Serialize the combined training configuration."""

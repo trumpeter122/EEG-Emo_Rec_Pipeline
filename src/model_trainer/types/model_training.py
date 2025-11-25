@@ -39,6 +39,11 @@ class ModelTrainingOption:
             raise ValueError(
                 "model_option target_kind must match training_data_option target_kind.",
             )
+        if (
+            self.model_option.backend == "torch"
+            and self.model_option.output_size is None
+        ):
+            raise ValueError("output_size must be set for torch backends.")
 
     def get_path(self) -> Path:
         """Directory where model artifacts (weights + metrics) are written."""
@@ -61,9 +66,17 @@ class ModelTrainingOption:
         """Return the metrics JSON path."""
         return self.get_path() / "metrics.json"
 
-    def get_state_dict_path(self) -> Path:
-        """Return the path for the serialized model weights."""
-        return self.get_path() / "best_model.pt"
+    def get_model_artifact_path(self) -> Path:
+        """
+        Return the path for the serialized model/estimator weights.
+
+        Torch models use ``best_model.pt`` while sklearn estimators use
+        ``best_model.joblib`` to keep artifacts distinct.
+        """
+        filename = "best_model.pt"
+        if self.model_option.backend == "sklearn":
+            filename = "best_model.joblib"
+        return self.get_path() / filename
 
     def get_splits_path(self) -> Path:
         """Return the path for persisting train/test segment identifiers."""

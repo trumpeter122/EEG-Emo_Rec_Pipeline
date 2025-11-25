@@ -36,6 +36,3 @@
 
 - Verbosity: No printing by default
 
-## Potential TODOs
-
-- metadata for preprocessor

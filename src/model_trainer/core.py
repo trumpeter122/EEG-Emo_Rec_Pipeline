@@ -7,8 +7,9 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
+import joblib  # type: ignore[import-untyped]
 import numpy as np
 import torch
 from sklearn.metrics import (  # type: ignore[import-untyped]
@@ -26,8 +27,8 @@ from sklearn.metrics import (  # type: ignore[import-untyped]
     recall_score,
 )
 
-from utils import track
-from utils.fs import atomic_directory
+from utils import message, prompt_confirm, spinner, track
+from utils.fs import atomic_directory, directory_is_populated
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,6 +37,14 @@ if TYPE_CHECKING:
 
 __all__ = ["run_model_trainer"]
 ZERO_DIVISION: Any = 0
+
+
+class _EstimatorProtocol(Protocol):
+    """Minimal sklearn-like estimator interface."""
+
+    def fit(self, X: np.ndarray, y: np.ndarray, **kwargs: Any) -> Any: ...
+
+    def predict(self, X: np.ndarray) -> np.ndarray: ...
 
 
 @dataclass(slots=True)
@@ -222,10 +231,11 @@ def run_model_trainer(model_training_option: ModelTrainingOption) -> None:
     Train the supplied option end-to-end and persist metrics atomically.
 
     - The routine seeds PyTorch for determinism, validates that the selected
-      model/criterion pair matches the dataset target kind, trains for the
-      requested number of epochs while tracking the best validation loss, and
-      finally re-loads the best checkpoint to compute regression + classification
-      diagnostics on both train and test splits.
+      backend and configuration match the dataset target kind, and executes
+      either the PyTorch training loop or a scikit-learn estimator flow. PyTorch
+      runs track the best validation loss, reload the top checkpoint, and then
+      compute regression/classification diagnostics on train & test splits.
+      sklearn runs fit once and evaluate directly on train/test arrays.
     - All metadata (params, metrics, splits, weights) is written via
       ``atomic_directory`` to guarantee that partially written runs never
       corrupt previous artifacts.
@@ -233,152 +243,255 @@ def run_model_trainer(model_training_option: ModelTrainingOption) -> None:
     training_option = model_training_option.training_option
     data_option = training_option.training_data_option
     method_option = training_option.training_method_option
+    backend = method_option.backend
 
-    seed = data_option.random_seed
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-    device_name = method_option.device
-    if device_name == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA requested but not available on this machine")
-    device = torch.device(device_name)
+    target_dir = model_training_option.get_path()
+    if directory_is_populated(target_dir):
+        description = (
+            f'Results already exist at "{target_dir}". Overwrite with the new run?'
+        )
+        if not prompt_confirm(description, timeout_seconds=3, default=False):
+            skip_description = (
+                f"Skipping training for {model_training_option.model_option.name}"
+            )
+            message(description=skip_description, context="Model Trainer")
+            return
 
     target_kind = data_option.target_kind
     class_values_array = data_option.get_class_values()
-    if target_kind == "classification":
-        if class_values_array is None:
-            raise RuntimeError("classification targets are missing class labels.")
-        if len(class_values_array) != model_training_option.model_option.output_size:
-            raise ValueError(
-                "Model output size must match the number of classification labels.",
+
+    model_artifact: Any
+    if backend == "torch":
+        seed = data_option.random_seed
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+        device_name = method_option.device
+        if device_name == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but not available on this machine")
+        device = torch.device(device_name)
+
+        if target_kind == "classification":
+            if class_values_array is None:
+                raise RuntimeError("classification targets are missing class labels.")
+            if (
+                model_training_option.model_option.output_size is None
+                or len(class_values_array)
+                != model_training_option.model_option.output_size
+            ):
+                raise ValueError(
+                    "Model output size must match the number of classification labels.",
+                )
+        elif model_training_option.model_option.output_size != 1:
+            raise ValueError("Regression models must use output_size=1.")
+        raw_model = model_training_option.model_option.build_model()
+        torch_model = cast("torch.nn.Module", raw_model)
+        model = torch_model.to(device)
+        optimizer = method_option.build_optimizer(model=model)
+        criterion = method_option.build_criterion().to(device=device)
+        class_values_tensor: torch.Tensor | None = None
+        if target_kind == "classification" and class_values_array is not None:
+            class_values_tensor = torch.tensor(
+                class_values_array,
+                dtype=torch.float32,
+                device=device,
             )
-    elif model_training_option.model_option.output_size != 1:
-        raise ValueError("Regression models must use output_size=1.")
-    model = model_training_option.model_option.build_model().to(device)
-    optimizer = method_option.build_optimizer(model=model)
-    criterion = method_option.build_criterion().to(device=device)
-    class_values_tensor: torch.Tensor | None = None
-    if target_kind == "classification" and class_values_array is not None:
-        class_values_tensor = torch.tensor(
-            class_values_array,
-            dtype=torch.float32,
-            device=device,
-        )
 
-    history: list[_EpochMetrics] = []
-    best_state: OrderedDict[str, torch.Tensor] | None = None
-    best_epoch = 0
-    best_val_loss = float("inf")
+        if training_option.train_loader is None or training_option.test_loader is None:
+            raise RuntimeError("Torch backend requires dataloaders to be present.")
 
-    for epoch in track(
-        iterable=range(1, method_option.epochs + 1),
-        description=f"Training {{{model_training_option.model_option.name}}}",
-        context="Model Trainer",
-    ):
-        start = time.perf_counter()
-        train_loss, train_mae = method_option.train_epoch_fn(
+        history: list[_EpochMetrics] = []
+        best_state: OrderedDict[str, torch.Tensor] | None = None
+        best_epoch = 0
+        best_val_loss = float("inf")
+        if method_option.epochs is None:
+            raise RuntimeError("epochs must be configured for torch backend.")
+        if method_option.batch_formatter is None:
+            raise RuntimeError("batch_formatter must be configured for torch backend.")
+
+        for epoch in track(
+            iterable=range(1, method_option.epochs + 1),
+            description=f"Training {{{model_training_option.model_option.name}}}",
+            context="Model Trainer",
+        ):
+            start = time.perf_counter()
+            if (
+                method_option.train_epoch_fn is None
+                or method_option.evaluate_epoch_fn is None
+            ):
+                raise RuntimeError(
+                    "Torch backend requires training/evaluation functions."
+                )
+            train_loss, train_mae = method_option.train_epoch_fn(
+                model,
+                training_option.train_loader,
+                optimizer,
+                criterion,
+                device,
+                target_kind,
+                class_values_tensor,
+                method_option.batch_formatter,
+            )
+            val_loss, val_mae = method_option.evaluate_epoch_fn(
+                model,
+                training_option.test_loader,
+                criterion,
+                device,
+                target_kind,
+                class_values_tensor,
+                method_option.batch_formatter,
+            )
+            elapsed = time.perf_counter() - start
+
+            history.append(
+                _EpochMetrics(
+                    epoch=epoch,
+                    train_loss=train_loss,
+                    train_mae=train_mae,
+                    val_loss=val_loss,
+                    val_mae=val_mae,
+                    seconds=elapsed,
+                ),
+            )
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_epoch = epoch
+                best_state = OrderedDict(
+                    (key, value.detach().cpu().clone())
+                    for key, value in model.state_dict().items()
+                )
+
+        if best_state is None:
+            raise RuntimeError("Model training did not produce any checkpoints.")
+
+        model.load_state_dict(best_state)
+        if method_option.prediction_collector is None:
+            raise RuntimeError("Torch backend requires a prediction_collector.")
+        train_preds, train_targets = method_option.prediction_collector(
             model,
             training_option.train_loader,
-            optimizer,
-            criterion,
             device,
             target_kind,
-            class_values_tensor,
-            method_option.batch_formatter,
+            class_values_array,
+            method_option.batch_formatter,  # type: ignore[arg-type]
         )
-        val_loss, val_mae = method_option.evaluate_epoch_fn(
+        test_preds, test_targets = method_option.prediction_collector(
             model,
             training_option.test_loader,
-            criterion,
             device,
             target_kind,
-            class_values_tensor,
-            method_option.batch_formatter,
+            class_values_array,
+            method_option.batch_formatter,  # type: ignore[arg-type]
         )
-        elapsed = time.perf_counter() - start
 
-        history.append(
-            _EpochMetrics(
-                epoch=epoch,
-                train_loss=train_loss,
-                train_mae=train_mae,
-                val_loss=val_loss,
-                val_mae=val_mae,
-                seconds=elapsed,
-            ),
-        )
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_epoch = epoch
-            best_state = OrderedDict(
-                (key, value.detach().cpu().clone())
-                for key, value in model.state_dict().items()
-            )
-
-    if best_state is None:
-        raise RuntimeError("Model training did not produce any checkpoints.")
-
-    model.load_state_dict(best_state)
-    train_preds, train_targets = method_option.prediction_collector(
-        model,
-        training_option.train_loader,
-        device,
-        target_kind,
-        class_values_array,
-        method_option.batch_formatter,
-    )
-    test_preds, test_targets = method_option.prediction_collector(
-        model,
-        training_option.test_loader,
-        device,
-        target_kind,
-        class_values_array,
-        method_option.batch_formatter,
-    )
-
-    total_seconds = float(sum(metric.seconds for metric in history))
-    if target_kind == "regression":
-        train_metrics = {
-            "regression": _regression_metrics(
-                predictions=train_preds,
-                targets=train_targets,
-            ),
+        total_seconds = float(sum(metric.seconds for metric in history))
+        if target_kind == "regression":
+            train_metrics = {
+                "regression": _regression_metrics(
+                    predictions=train_preds,
+                    targets=train_targets,
+                ),
+            }
+            test_metrics = {
+                "regression": _regression_metrics(
+                    predictions=test_preds,
+                    targets=test_targets,
+                ),
+            }
+        else:
+            train_metrics = {
+                "classification": _classification_metrics(
+                    predictions=train_preds,
+                    targets=train_targets,
+                ),
+            }
+            test_metrics = {
+                "classification": _classification_metrics(
+                    predictions=test_preds,
+                    targets=test_targets,
+                ),
+            }
+        metrics_payload = {
+            "best_epoch": best_epoch,
+            "best_val_loss": best_val_loss,
+            "total_seconds": total_seconds,
+            "epochs": [metric.to_dict() for metric in history],
+            "train_metrics": train_metrics,
+            "test_metrics": test_metrics,
         }
-        test_metrics = {
-            "regression": _regression_metrics(
-                predictions=test_preds,
-                targets=test_targets,
-            ),
-        }
+        if best_state is None:
+            raise RuntimeError("best_state unexpectedly None prior to serialization.")
+        model_artifact = best_state
     else:
-        train_metrics = {
-            "classification": _classification_metrics(
-                predictions=train_preds,
-                targets=train_targets,
-            ),
+        from sklearn.base import BaseEstimator  # type: ignore[import-untyped]
+
+        (train_arrays, train_targets), (test_arrays, test_targets) = (
+            data_option.get_numpy_splits()
+        )
+        model = model_training_option.model_option.build_model()
+        if not isinstance(model, BaseEstimator):
+            raise RuntimeError("Sklearn backend requires a scikit-learn estimator.")
+        estimator = cast("_EstimatorProtocol", model)
+
+        status_text = (
+            "[bold blue]Training sklearn model "
+            f"{{{model_training_option.model_option.name}}}[/bold blue]"
+        )
+        with spinner(description=status_text, context="Model Trainer"):
+            start = time.perf_counter()
+            estimator.fit(
+                train_arrays,
+                train_targets,
+                **(method_option.fit_kwargs or {}),
+            )
+            total_seconds = time.perf_counter() - start
+
+        train_preds = estimator.predict(train_arrays)
+        test_preds = estimator.predict(test_arrays)
+
+        if target_kind == "regression":
+            train_metrics = {
+                "regression": _regression_metrics(
+                    predictions=train_preds,
+                    targets=train_targets,
+                ),
+            }
+            test_metrics = {
+                "regression": _regression_metrics(
+                    predictions=test_preds,
+                    targets=test_targets,
+                ),
+            }
+        else:
+            train_metrics = {
+                "classification": _classification_metrics(
+                    predictions=train_preds,
+                    targets=train_targets,
+                ),
+            }
+            test_metrics = {
+                "classification": _classification_metrics(
+                    predictions=test_preds,
+                    targets=test_targets,
+                ),
+            }
+        metrics_payload = {
+            "best_epoch": 0,
+            "best_val_loss": None,
+            "total_seconds": total_seconds,
+            "epochs": [],
+            "train_metrics": train_metrics,
+            "test_metrics": test_metrics,
         }
-        test_metrics = {
-            "classification": _classification_metrics(
-                predictions=test_preds,
-                targets=test_targets,
-            ),
-        }
-    metrics_payload = {
-        "best_epoch": best_epoch,
-        "best_val_loss": best_val_loss,
-        "total_seconds": total_seconds,
-        "epochs": [metric.to_dict() for metric in history],
-        "train_metrics": train_metrics,
-        "test_metrics": test_metrics,
-    }
+        model_artifact = model
+
     params_payload = {
         "time stamp": str(datetime.now()),
         "model_training_option": model_training_option.to_params(),
     }
     splits_payload = training_option.training_data_option.segment_splits
 
-    target_dir = model_training_option.get_path()
     with atomic_directory(target_dir=target_dir) as staging_dir:
         _dump_json(
             staging_dir / model_training_option.get_params_path().name,
@@ -392,7 +505,10 @@ def run_model_trainer(model_training_option: ModelTrainingOption) -> None:
             staging_dir / model_training_option.get_splits_path().name,
             splits_payload,
         )
-        torch.save(
-            obj=best_state,
-            f=staging_dir / model_training_option.get_state_dict_path().name,
+        artifact_path = (
+            staging_dir / model_training_option.get_model_artifact_path().name
         )
+        if backend == "torch":
+            torch.save(obj=model_artifact, f=artifact_path)
+        else:
+            joblib.dump(value=model_artifact, filename=artifact_path, compress=3)

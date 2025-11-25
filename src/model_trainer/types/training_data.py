@@ -54,6 +54,7 @@ class TrainingDataOption:
     segment_splits: dict[str, list[int]] = field(init=False)
     class_labels: list[float] | None = field(init=False, default=None)
     _target_dtype: np.dtype[Any] = field(init=False)
+    _frame: pd.DataFrame = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._validate_sizes()
@@ -66,15 +67,16 @@ class TrainingDataOption:
         )
         trimmed = self._encode_targets(frame=trimmed)
         trimmed = self._scale_feature_column(frame=trimmed)
+        self._frame = trimmed
 
         splits = self._generate_segment_splits(total=len(trimmed))
         self.segment_splits = splits
         self.train_dataset = self._build_dataset(
-            frame=trimmed,
+            frame=self._frame,
             indices=splits["train-segments"],
         )
         self.test_dataset = self._build_dataset(
-            frame=trimmed,
+            frame=self._frame,
             indices=splits["test-segments"],
         )
 
@@ -231,6 +233,32 @@ class TrainingDataOption:
             features=features,
             targets=targets,
             target_dtype=self._target_dtype,
+        )
+
+    def _arrays_from_indices(self, indices: list[int]) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Build feature/target arrays for sklearn-compatible training flows.
+
+        Features are flattened per-segment to a 2D matrix while preserving the
+        target dtype set during encoding.
+        """
+        subset = self._frame.iloc[indices].reset_index(drop=True)
+        features = [
+            np.asarray(feature, dtype=np.float32).reshape(-1)
+            for feature in subset["data"].tolist()
+        ]
+        targets = subset[self.target].to_numpy(dtype=self._target_dtype, copy=True)
+        return np.stack(features, axis=0), targets
+
+    def get_numpy_splits(
+        self,
+    ) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray]]:
+        """Return ``(x_train, y_train), (x_test, y_test)`` for sklearn flows."""
+        train_indices = self.segment_splits["train-segments"]
+        test_indices = self.segment_splits["test-segments"]
+        return (
+            self._arrays_from_indices(indices=train_indices),
+            self._arrays_from_indices(indices=test_indices),
         )
 
     def to_params(self) -> dict[str, Any]:
