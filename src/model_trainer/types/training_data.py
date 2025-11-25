@@ -58,7 +58,15 @@ class TrainingDataOption:
 
     def __post_init__(self) -> None:
         self._validate_sizes()
-        self.name = self._build_name()
+        self.name = "+".join(
+            [
+                self.feature_extraction_option.name,
+                self.target,
+                f"use{self.use_size:.2f}",
+                f"test{self.test_size:.2f}",
+                f"seed{self.random_seed}",
+            ],
+        )
 
         frame = self._load_feature_frame()
         trimmed = cast(
@@ -85,15 +93,6 @@ class TrainingDataOption:
             raise ValueError("use_size must fall within the interval (0, 1].")
         if not 0 < self.test_size < 1:
             raise ValueError("test_size must fall within the interval (0, 1).")
-
-    def _build_name(self) -> str:
-        return (
-            f"{self.feature_extraction_option.name}"
-            f"|target={self.target}"
-            f"|use={self.use_size:.2f}"
-            f"|test={self.test_size:.2f}"
-            f"|seed={self.random_seed}"
-        )
 
     def _load_feature_frame(self) -> pd.DataFrame:
         file_paths = self.feature_extraction_option.get_file_paths()

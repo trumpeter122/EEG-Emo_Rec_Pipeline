@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from config.constants import RESULTS_ROOT
@@ -33,6 +33,7 @@ class ModelTrainingOption:
 
     model_option: ModelOption
     training_option: TrainingOption
+    name: str = field(init=False)
 
     def __post_init__(self) -> None:
         """Validate that the model and dataset target kinds agree."""
@@ -46,6 +47,12 @@ class ModelTrainingOption:
             and self.model_option.output_size is None
         ):
             raise ValueError("output_size must be set for torch backends.")
+        self.name = "+".join(
+            [
+                self.training_option.name,
+                self.model_option.name,
+            ],
+        )
 
     def get_run_dir(self, *, run_timestamp: str) -> Path:
         """Directory where model artifacts (weights + metrics) are written."""
@@ -83,6 +90,7 @@ class ModelTrainingOption:
     def to_params(self) -> dict[str, Any]:
         """Serialize the aggregated model + training configuration."""
         return {
+            "name": self.name,
             "model_option": self.model_option.to_params(),
             "training_option": self.training_option.to_params(),
         }

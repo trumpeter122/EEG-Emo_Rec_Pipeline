@@ -44,9 +44,11 @@ class TrainingOption:
             raise ValueError(
                 "training_method_option target_kind must match training_data_option.",
             )
-        self.name = (
-            f"{self.training_data_option.name}"
-            f"|method={self.training_method_option.name}"
+        self.name = "+".join(
+            [
+                self.training_data_option.name,
+                self.training_method_option.name,
+            ],
         )
         if self.training_method_option.backend == "torch":
             self.train_loader = self.training_method_option.build_dataloader(
