@@ -23,7 +23,60 @@ if TYPE_CHECKING:
 
     from feature_extractor.types import FeatureExtractionOption
 
-__all__ = ["TrainingDataOption"]
+__all__ = ["BuildDatasetOption", "TrainingDataOption"]
+
+
+@dataclass(slots=True)
+class BuildDatasetOption:
+    target: str
+    random_seed: int
+    use_size: float
+    test_size: float
+    target_kind: Literal["regression", "classification"]
+    feature_scaler: Literal["none", "standard", "minmax"]
+
+    name: str = field(init=False)
+    class_labels: list[float] | None = field(init=False, default=None)
+    class_labels_expected: Sequence[float] | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        self._validate_sizes()
+        self.name = "+".join(
+            [
+                self.target,
+                f"use{self.use_size:.2f}",
+                f"test{self.test_size:.2f}",
+                f"seed{self.random_seed}",
+                f"{self.target_kind}",
+                f"{self.feature_scaler}",
+            ],
+        )
+
+        self.class_labels_expected = [float(index) for index in range(1, 10)]
+
+    def _validate_sizes(self) -> None:
+        if not 0 < self.use_size <= 1:
+            raise ValueError("use_size must fall within the interval (0, 1].")
+        if not 0 < self.test_size < 1:
+            raise ValueError("test_size must fall within the interval (0, 1).")
+
+    def to_params(self) -> dict[str, Any]:
+        """Serialize training configuration metadata."""
+        return {
+            "name": self.name,
+            "target": self.target,
+            "random_seed": self.random_seed,
+            "use_size": self.use_size,
+            "test_size": self.test_size,
+            "target_kind": self.target_kind,
+            "feature_scaler": self.feature_scaler,
+            "class_labels": list(self.class_labels) if self.class_labels else None,
+            "class_labels_expected": (
+                list(self.class_labels_expected)
+                if self.class_labels_expected is not None
+                else None
+            ),
+        }
 
 
 @dataclass(slots=True)
@@ -40,38 +93,26 @@ class TrainingDataOption:
     """
 
     feature_extraction_option: FeatureExtractionOption
-    target: str
-    random_seed: int
-    use_size: float
-    test_size: float
-    target_kind: Literal["regression", "classification"]
-    feature_scaler: Literal["none", "standard", "minmax"]
-    class_labels_expected: Sequence[float] | None = None
+    build_dataset_option: BuildDatasetOption
 
     name: str = field(init=False)
     train_dataset: Dataset[tuple[np.ndarray, float]] = field(init=False)
     test_dataset: Dataset[tuple[np.ndarray, float]] = field(init=False)
     segment_splits: dict[str, list[int]] = field(init=False)
-    class_labels: list[float] | None = field(init=False, default=None)
     _target_dtype: np.dtype[Any] = field(init=False)
     _frame: pd.DataFrame = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._validate_sizes()
         self.name = "+".join(
-            [
-                self.feature_extraction_option.name,
-                self.target,
-                f"use{self.use_size:.2f}",
-                f"test{self.test_size:.2f}",
-                f"seed{self.random_seed}",
-            ],
+            [self.feature_extraction_option.name, self.build_dataset_option.name],
         )
 
         frame = self._load_feature_frame()
         trimmed = cast(
             "pd.DataFrame",
-            frame.loc[:, ["data", self.target]].reset_index(drop=True),
+            frame.loc[:, ["data", self.build_dataset_option.target]].reset_index(
+                drop=True
+            ),
         )
         trimmed = self._encode_targets(frame=trimmed)
         trimmed = self._scale_feature_column(frame=trimmed)
@@ -87,12 +128,6 @@ class TrainingDataOption:
             frame=self._frame,
             indices=splits["test-segments"],
         )
-
-    def _validate_sizes(self) -> None:
-        if not 0 < self.use_size <= 1:
-            raise ValueError("use_size must fall within the interval (0, 1].")
-        if not 0 < self.test_size < 1:
-            raise ValueError("test_size must fall within the interval (0, 1).")
 
     def _load_feature_frame(self) -> pd.DataFrame:
         file_paths = self.feature_extraction_option.get_file_paths()
@@ -112,9 +147,10 @@ class TrainingDataOption:
             )
 
         frame = cast("pd.DataFrame", pd.concat(frames, axis=0, ignore_index=True))
-        if self.target not in frame.columns:
+        if self.build_dataset_option.target not in frame.columns:
             raise KeyError(
-                f'Target column "{self.target}" is missing from the features frame.',
+                f'Target column "{self.build_dataset_option.target}"'
+                "is missing from the features frame.",
             )
         if "data" not in frame.columns:
             raise KeyError('Column "data" is missing from the features frame.')
@@ -122,17 +158,20 @@ class TrainingDataOption:
         return frame
 
     def _encode_targets(self, frame: pd.DataFrame) -> pd.DataFrame:
-        values = frame.loc[:, self.target].to_numpy(copy=True)
-        if self.target_kind == "classification":
-            if self.class_labels_expected is not None:
-                unique_values = [float(value) for value in self.class_labels_expected]
+        values = frame.loc[:, self.build_dataset_option.target].to_numpy(copy=True)
+        if self.build_dataset_option.target_kind == "classification":
+            if self.build_dataset_option.class_labels_expected is not None:
+                unique_values = [
+                    float(value)
+                    for value in self.build_dataset_option.class_labels_expected
+                ]
             else:
                 unique_values = sorted({float(value) for value in values})
             if len(unique_values) < 2:
                 raise ValueError(
                     "classification targets must contain at least two classes.",
                 )
-            if self.class_labels_expected is not None:
+            if self.build_dataset_option.class_labels_expected is not None:
                 label_array = np.asarray(unique_values, dtype=np.float32)
                 value_array = values.astype(np.float32)
                 encoded = (
@@ -148,17 +187,19 @@ class TrainingDataOption:
                     [mapping[float(value)] for value in values],
                     dtype=np.int64,
                 )
-            self.class_labels = unique_values
+            self.build_dataset_option.class_labels = unique_values
             self._target_dtype = np.dtype(np.int64)
             frame = frame.copy()
-            frame.loc[:, self.target] = encoded
-        elif self.target_kind == "regression":
+            frame.loc[:, self.build_dataset_option.target] = encoded
+        elif self.build_dataset_option.target_kind == "regression":
             frame = frame.copy()
-            frame.loc[:, self.target] = values.astype(np.float32)
-            self.class_labels = None
+            frame.loc[:, self.build_dataset_option.target] = values.astype(np.float32)
+            self.build_dataset_option.class_labels = None
             self._target_dtype = np.dtype(np.float32)
         else:
-            raise ValueError(f"Unsupported target_kind: {self.target_kind}")
+            raise ValueError(
+                f"Unsupported target_kind: {self.build_dataset_option.target_kind}"
+            )
         return frame
 
     def _scale_feature_column(self, frame: pd.DataFrame) -> pd.DataFrame:
@@ -168,18 +209,21 @@ class TrainingDataOption:
         if not arrays:
             raise ValueError("No feature arrays were found to scale.")
 
-        if self.feature_scaler == "none":
+        if self.build_dataset_option.feature_scaler == "none":
             frame = frame.copy()
             frame.loc[:, "data"] = arrays
             return frame
 
         flattened = np.stack([array.reshape(-1) for array in arrays], axis=0)
-        if self.feature_scaler == "standard":
+        if self.build_dataset_option.feature_scaler == "standard":
             scaler = StandardScaler()
-        elif self.feature_scaler == "minmax":
+        elif self.build_dataset_option.feature_scaler == "minmax":
             scaler = MinMaxScaler()
         else:
-            raise ValueError(f"Unsupported feature_scaler: {self.feature_scaler}")
+            raise ValueError(
+                "Unsupported feature_scaler: "
+                f"{self.build_dataset_option.feature_scaler}"
+            )
         scaled = scaler.fit_transform(flattened)
         reshaped = [
             scaled[row_index].reshape(arrays[row_index].shape)
@@ -193,18 +237,20 @@ class TrainingDataOption:
         if total < 2:
             raise ValueError("At least two segments are required for training.")
 
-        usable = max(1, int(total * self.use_size))
+        usable = max(1, int(total * self.build_dataset_option.use_size))
         if usable < 2:
             raise ValueError(
                 "use_size selects fewer than two segments; increase use_size.",
             )
 
-        rng = random.Random(self.random_seed)
+        rng = random.Random(self.build_dataset_option.random_seed)
         indices = list(range(total))
         rng.shuffle(indices)
         used_indices = indices[:usable]
 
-        test_count = max(1, int(round(len(used_indices) * self.test_size)))
+        test_count = max(
+            1, int(round(len(used_indices) * self.build_dataset_option.test_size))
+        )
         if test_count >= len(used_indices):
             raise ValueError(
                 "test_size allocates all usable segments to testing; "
@@ -227,7 +273,7 @@ class TrainingDataOption:
     ) -> Dataset[tuple[np.ndarray, float]]:
         subset = frame.iloc[indices].reset_index(drop=True)
         features = subset["data"].tolist()
-        targets = subset[self.target].tolist()
+        targets = subset[self.build_dataset_option.target].tolist()
         return SegmentDataset(
             features=features,
             targets=targets,
@@ -246,7 +292,9 @@ class TrainingDataOption:
             np.asarray(feature, dtype=np.float32).reshape(-1)
             for feature in subset["data"].tolist()
         ]
-        targets = subset[self.target].to_numpy(dtype=self._target_dtype, copy=True)
+        targets = subset[self.build_dataset_option.target].to_numpy(
+            dtype=self._target_dtype, copy=True
+        )
         return np.stack(features, axis=0), targets
 
     def get_numpy_splits(
@@ -265,21 +313,10 @@ class TrainingDataOption:
         return {
             "name": self.name,
             "feature_extraction_option": self.feature_extraction_option.to_params(),
-            "target": self.target,
-            "random_seed": self.random_seed,
-            "use_size": self.use_size,
-            "test_size": self.test_size,
-            "target_kind": self.target_kind,
-            "feature_scaler": self.feature_scaler,
-            "class_labels": list(self.class_labels) if self.class_labels else None,
-            "class_labels_expected": (
-                list(self.class_labels_expected)
-                if self.class_labels_expected is not None
-                else None
-            ),
+            "build_dataset_option": self.build_dataset_option.to_params(),
         }
 
     def get_class_values(self) -> np.ndarray | None:
-        if not self.class_labels:
+        if not self.build_dataset_option.class_labels:
             return None
-        return np.asarray(self.class_labels, dtype=np.float32)
+        return np.asarray(self.build_dataset_option.class_labels, dtype=np.float32)

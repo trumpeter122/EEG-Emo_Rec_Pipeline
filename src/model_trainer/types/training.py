@@ -39,10 +39,11 @@ class TrainingOption:
         """
         if (
             self.training_method_option.target_kind
-            != self.training_data_option.target_kind
+            != self.training_data_option.build_dataset_option.target_kind
         ):
             raise ValueError(
-                "training_method_option target_kind must match training_data_option.",
+                "training_method_option target_kind must match"
+                "training_data_option target_kind.",
             )
         self.name = "+".join(
             [

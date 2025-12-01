@@ -504,9 +504,9 @@ def _train_torch_model(
     training_option = model_training_option.training_option
     data_option = training_option.training_data_option
     method_option = training_option.training_method_option
-    target_kind: TargetKind = data_option.target_kind
+    target_kind: TargetKind = data_option.build_dataset_option.target_kind
 
-    _seed_torch(random_seed=data_option.random_seed)
+    _seed_torch(random_seed=data_option.build_dataset_option.random_seed)
     device = _select_device(device_name=method_option.device)
 
     model_option = model_training_option.model_option
@@ -606,7 +606,7 @@ def _train_sklearn_model(
     training_option = model_training_option.training_option
     method_option = training_option.training_method_option
     data_option = training_option.training_data_option
-    target_kind: TargetKind = data_option.target_kind
+    target_kind: TargetKind = data_option.build_dataset_option.target_kind
 
     (train_arrays, train_targets), (test_arrays, test_targets) = (
         data_option.get_numpy_splits()

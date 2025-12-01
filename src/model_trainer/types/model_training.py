@@ -37,8 +37,19 @@ class ModelTrainingOption:
 
     def __post_init__(self) -> None:
         """Validate that the model and dataset target kinds agree."""
+        if (
+            self.model_option.backend
+            != self.training_option.training_method_option.backend
+        ):
+            raise ValueError(
+                "model_option backend must match"
+                "training_option.training_method_option backend.",
+            )
         data_option = self.training_option.training_data_option
-        if self.model_option.target_kind != data_option.target_kind:
+        if (
+            self.model_option.target_kind
+            != data_option.build_dataset_option.target_kind
+        ):
             raise ValueError(
                 "model_option target_kind must match training_data_option target_kind.",
             )
@@ -56,7 +67,11 @@ class ModelTrainingOption:
 
     def get_run_dir(self, *, run_timestamp: str) -> Path:
         """Directory where model artifacts (weights + metrics) are written."""
-        target_root = RESULTS_ROOT / self.model_option.target_kind
+        target_root = (
+            RESULTS_ROOT
+            / self.training_option.training_data_option.build_dataset_option.target
+            / self.model_option.target_kind
+        )
         return target_root / run_timestamp
 
     def get_params_path(self, *, run_timestamp: str) -> Path:

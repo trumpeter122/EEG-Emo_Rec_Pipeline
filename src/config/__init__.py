@@ -17,6 +17,7 @@ __all__ = [
     "FeatureOption",
     "SegmentationOption",
     "FeatureExtractionOption",
+    "BuildDatasetOption",
     "TrainingDataOption",
     "TrainingMethodOption",
     "TrainingOption",
@@ -35,6 +36,7 @@ ChannelPickOption: Any
 FeatureOption: Any
 SegmentationOption: Any
 FeatureExtractionOption: Any
+BuildDatasetOption: Any
 TrainingDataOption: Any
 TrainingMethodOption: Any
 TrainingOption: Any
@@ -47,6 +49,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "FeatureOption": ("feature_extractor.types", "FeatureOption"),
     "SegmentationOption": ("feature_extractor.types", "SegmentationOption"),
     "FeatureExtractionOption": ("feature_extractor.types", "FeatureExtractionOption"),
+    "BuildDatasetOption": ("model_trainer.types", "BuildDatasetOption"),
     "TrainingDataOption": ("model_trainer.types", "TrainingDataOption"),
     "TrainingMethodOption": ("model_trainer.types", "TrainingMethodOption"),
     "TrainingOption": ("model_trainer.types", "TrainingOption"),

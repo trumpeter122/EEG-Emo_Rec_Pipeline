@@ -144,6 +144,9 @@ class OptionList(Sequence[_OptionType]):
         """
         return iter(self._options)
 
+    def __str__(self) -> str:
+        return str([option.name for option in self._options])
+
     def get_name(self, name: str) -> _OptionType:
         """
         Retrieve a single option by name.
